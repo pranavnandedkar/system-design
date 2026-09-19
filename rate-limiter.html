@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rate Limiter — System Design & Java Implementations</title>
+<style>
+:root{--bg:#0b1020;--panel:#121a2d;--panel2:#0f1728;--text:#e8eefc;--muted:#a9b5cc;--accent:#7dd3fc;--accent2:#a7f3d0;--border:#26324b;--code:#0a0f1d;--warn:#fde68a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:linear-gradient(180deg,#0b1020 0,#0c1425 55%,#0b1020 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}.wrap{max-width:1180px;margin:auto;padding:0 24px}
+header{padding:60px 0 38px;border-bottom:1px solid var(--border)}.eyebrow{font-size:.78rem;text-transform:uppercase;letter-spacing:.16em;color:var(--accent2);font-weight:800}
+h1{font-size:clamp(2.2rem,5vw,4.2rem);line-height:1.05;margin:10px 0 18px}.lead{font-size:1.14rem;color:var(--muted);max-width:850px}
+.badges{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.badge{border:1px solid var(--border);background:#0e172a;padding:6px 10px;border-radius:999px;color:#dbeafe;font-size:.82rem}
+nav{position:sticky;top:0;z-index:5;background:rgba(11,16,32,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}nav .navin{display:flex;gap:18px;overflow:auto;padding:12px 0;white-space:nowrap}nav a{color:#c9d5ea;font-size:.9rem}
+main{padding:34px 0 70px}section{margin:0 0 56px}h2{font-size:1.75rem;margin:0 0 16px}h3{margin:26px 0 10px;font-size:1.15rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:14px;padding:20px}.card h3{margin-top:0}.muted{color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:block;overflow-x:auto}th,td{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}th{color:#dff7ff;background:#111b30}tr:last-child td{border-bottom:0}
+pre{background:var(--code);border:1px solid #222e47;border-radius:12px;padding:18px;overflow:auto;font-size:.88rem;line-height:1.55;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}.inline{background:#162036;border:1px solid #26344f;border-radius:5px;padding:1px 5px}
+.callout{border-left:4px solid var(--accent);background:#0d1a2d;border-radius:0 10px 10px 0;padding:14px 18px;color:#d7e6fb}.warn{border-left-color:var(--warn)}
+.flow{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;align-items:center;margin:22px 0}.node{background:#121d33;border:1px solid var(--border);padding:12px 8px;text-align:center;border-radius:10px;font-size:.84rem}.arrow{text-align:center;color:var(--accent);font-size:1.4rem}
+.small{font-size:.9rem}.toc{columns:2;column-gap:40px}.toc a{display:block;margin:5px 0}
+footer{border-top:1px solid var(--border);padding:25px 0 45px;color:var(--muted)}
+@media(max-width:760px){.wrap{padding:0 16px}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.toc{columns:1}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<div class="eyebrow">Staff Engineer Interview Guide</div>
+<h1>Rate Limiter: System Design + Java</h1>
+<p class="lead">A practical, interview-ready guide to rate limiting: requirements, architecture, five common algorithms, local Java implementations, distributed Redis design, trade-offs, failure modes, and scaling questions.</p>
+<div class="badges"><span class="badge">Fixed Window</span><span class="badge">Sliding Window Log</span><span class="badge">Sliding Window Counter</span><span class="badge">Token Bucket</span><span class="badge">Leaky Bucket</span><span class="badge">Java 17+</span></div>
+</div></header>
+
+<nav><div class="wrap navin">
+<a href="#requirements">Requirements</a><a href="#architecture">Architecture</a><a href="#algorithms">Algorithms</a><a href="#code">Java</a><a href="#distributed">Distributed</a><a href="#failure">Failures</a><a href="#tradeoffs">Trade-offs</a><a href="#interview">Interview</a>
+</div></nav>
+
+<main class="wrap">
+<section id="requirements"><h2>1. Start with requirements</h2>
+<div class="grid">
+<div class="card"><h3>Functional</h3><p>Allow or reject a request based on a limit. Key the policy by API key, user, IP, tenant, endpoint, or a hierarchy of keys.</p></div>
+<div class="card"><h3>Non-functional</h3><p>Very low decision latency, high availability, predictable memory/CPU, horizontal scalability, and safe behavior during datastore failures.</p></div>
+<div class="card"><h3>Policy examples</h3><p><span class="inline">100 req/min/user</span>, <span class="inline">1,000 req/s/tenant</span>, burst capacity of 2,000, separate read/write limits.</p></div>
+<div class="card"><h3>Questions to clarify</h3><p>Hard vs soft limit? Burst allowed? Exact vs approximate counting? Per-region or global? What should happen when the limiter store is unavailable?</p></div>
+</div>
+<div class="callout"><b>Interview framing:</b> first define the limit, window, identity key, burst semantics, and consistency requirement. The algorithm follows from those choices.</div>
+</section>
+
+<section id="architecture"><h2>2. Reference architecture</h2>
+<div class="flow">
+<div class="node">Client</div><div class="arrow">→</div><div class="node">API Gateway / Service</div><div class="arrow">→</div><div class="node">Rate Limiter</div><div class="arrow">→</div><div class="node">Protected API</div>
+</div>
+<div class="grid">
+<div class="card"><h3>Local fast path</h3><p>Each application instance keeps counters/tokens in memory. Lowest latency; no network hop. Accuracy is approximate when many instances share a quota.</p></div>
+<div class="card"><h3>Shared state</h3><p>Redis is a common choice for a shared limiter. Use atomic operations or a Lua script so read/decide/update is one atomic decision.</p></div>
+<div class="card"><h3>Hybrid</h3><p>Use local checks for coarse protection and Redis for tenant/global quotas. This limits blast radius while preserving accurate shared limits where required.</p></div>
+</div>
+<h3>Request path</h3>
+<pre><code>1. Extract identity: tenantId / userId / IP
+2. Load policy: rate + burst + algorithm
+3. Atomically evaluate limiter
+4. If denied: HTTP 429 + Retry-After
+5. If allowed: forward request
+6. Emit metrics: allowed, rejected, remaining, decision latency</code></pre>
+</section>
+
+<section id="algorithms"><h2>3. Algorithms at a glance</h2>
+<table><thead><tr><th>Algorithm</th><th>Idea</th><th>Burst behavior</th><th>Memory</th><th>Typical use</th></tr></thead>
+<tbody>
+<tr><td><b>Fixed Window</b></td><td>Count requests inside fixed time buckets.</td><td>Can burst at a boundary.</td><td>O(keys)</td><td>Simple API quotas.</td></tr>
+<tr><td><b>Sliding Window Log</b></td><td>Store timestamps of recent requests.</td><td>Precise; no boundary artifact.</td><td>O(requests in window)</td><td>Smaller traffic / strict precision.</td></tr>
+<tr><td><b>Sliding Window Counter</b></td><td>Combine current and previous window counts using a weighted estimate.</td><td>Smoother than fixed window.</td><td>O(keys)</td><td>Large scale, approximate limits.</td></tr>
+<tr><td><b>Token Bucket</b></td><td>Tokens refill continuously; requests consume tokens.</td><td>Explicit burst capacity.</td><td>O(keys)</td><td>APIs and traffic shaping.</td></tr>
+<tr><td><b>Leaky Bucket</b></td><td>Requests enter a bounded queue drained at a steady rate.</td><td>Buffers burst; queue can fill.</td><td>O(queue)</td><td>Smoothing work into a downstream system.</td></tr>
+</tbody></table>
+<div class="callout"><b>Key distinction:</b> token bucket controls how many requests may pass immediately; leaky bucket controls the output rate and commonly introduces a queue.</div>
+</section>
+
+<section id="code"><h2>4. Simple Java implementations</h2>
+<p class="muted">These examples are intentionally small and in-memory. They show the core algorithm, not production concerns such as distributed atomicity, eviction, persistence, or configuration management.</p>
+
+<h3>4.1 Fixed Window Counter</h3>
+<pre><code>import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class FixedWindowRateLimiter {
+    private final long limit;
+    private final long windowMillis;
+    private final ConcurrentHashMap&lt;String, Counter&gt; counters = new ConcurrentHashMap&lt;&gt;();
+
+    public FixedWindowRateLimiter(long limit, Duration window) {
+        this.limit = limit;
+        this.windowMillis = window.toMillis();
+    }
+
+    public boolean allow(String key) {
+        long now = System.currentTimeMillis();
+        long window = now / windowMillis;
+
+        Counter c = counters.compute(key, (k, old) -&gt; {
+            if (old == null || old.window != window) {
+                return new Counter(window, 1);
+            }
+            return new Counter(old.window, old.count + 1);
+        });
+
+        return c.count &lt;= limit;
+    }
+
+    private record Counter(long window, long count) {}
+}</code></pre>
+<div class="callout warn">Boundary issue: a client can make <b>limit</b> requests at the end of one window and another <b>limit</b> immediately after the boundary.</div>
+
+<h3>4.2 Sliding Window Log</h3>
+<pre><code>import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class SlidingWindowLogRateLimiter {
+    private final int limit;
+    private final long windowMillis;
+    private final ConcurrentHashMap&lt;String, Deque&lt;Long&gt;&gt; logs = new ConcurrentHashMap&lt;&gt;();
+
+    public SlidingWindowLogRateLimiter(int limit, Duration window) {
+        this.limit = limit;
+        this.windowMillis = window.toMillis();
+    }
+
+    public boolean allow(String key) {
+        long now = System.currentTimeMillis();
+
+        Deque&lt;Long&gt; q = logs.computeIfAbsent(key, k -&gt; new ArrayDeque&lt;&gt;());
+        synchronized (q) {
+            long cutoff = now - windowMillis;
+            while (!q.isEmpty() &amp;&amp; q.peekFirst() &lt;= cutoff) {
+                q.removeFirst();
+            }
+            if (q.size() &gt;= limit) {
+                return false;
+            }
+            q.addLast(now);
+            return true;
+        }
+    }
+}</code></pre>
+<p class="small muted">Exact within the chosen clock/window, but memory grows with request volume.</p>
+
+<h3>4.3 Sliding Window Counter</h3>
+<pre><code>public final class SlidingWindowCounterRateLimiter {
+    private final long limit;
+    private final long windowMillis;
+
+    private long currentWindow = -1;
+    private long currentCount = 0;
+    private long previousCount = 0;
+
+    public SlidingWindowCounterRateLimiter(long limit, long windowMillis) {
+        this.limit = limit;
+        this.windowMillis = windowMillis;
+    }
+
+    public synchronized boolean allow() {
+        long nowWindow = System.currentTimeMillis() / windowMillis;
+
+        if (currentWindow == -1) {
+            currentWindow = nowWindow;
+        } else if (nowWindow != currentWindow) {
+            previousCount = currentCount;
+            currentCount = 0;
+            currentWindow = nowWindow;
+        }
+
+        double elapsedFraction =
+                (System.currentTimeMillis() % windowMillis) / (double) windowMillis;
+
+        double estimated = previousCount * (1.0 - elapsedFraction) + currentCount;
+
+        if (estimated &gt;= limit) {
+            return false;
+        }
+
+        currentCount++;
+        return true;
+    }
+}</code></pre>
+<p class="small muted">In a real service, keep two counters per key and use an atomic datastore operation. This algorithm is an estimate, not an exact timestamp log.</p>
+
+<h3>4.4 Token Bucket</h3>
+<pre><code>public final class TokenBucketRateLimiter {
+    private final double capacity;
+    private final double refillPerSecond;
+
+    private double tokens;
+    private long lastRefillNanos;
+
+    public TokenBucketRateLimiter(double capacity, double refillPerSecond) {
+        this.capacity = capacity;
+        this.refillPerSecond = refillPerSecond;
+        this.tokens = capacity;
+        this.lastRefillNanos = System.nanoTime();
+    }
+
+    public synchronized boolean allow() {
+        refill();
+
+        if (tokens &lt; 1.0) {
+            return false;
+        }
+
+        tokens -= 1.0;
+        return true;
+    }
+
+    private void refill() {
+        long now = System.nanoTime();
+        double elapsedSeconds = (now - lastRefillNanos) / 1_000_000_000.0;
+
+        tokens = Math.min(capacity, tokens + elapsedSeconds * refillPerSecond);
+        lastRefillNanos = now;
+    }
+}</code></pre>
+<div class="callout"><b>Example:</b> capacity = 100 and refill = 10 tokens/sec means up to 100 immediate requests after a full idle period, then roughly 10 requests/sec sustained.</div>
+
+<h3>4.5 Leaky Bucket</h3>
+<pre><code>import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.Queue;
+
+public final class LeakyBucketRateLimiter {
+    private final int queueCapacity;
+    private final long intervalMillis;
+    private final Queue&lt;Long&gt; queue = new ArrayDeque&lt;&gt;();
+    private long nextLeakAt = 0;
+
+    public LeakyBucketRateLimiter(int queueCapacity, Duration outputInterval) {
+        this.queueCapacity = queueCapacity;
+        this.intervalMillis = outputInterval.toMillis();
+    }
+
+    public synchronized boolean submit(long requestId) {
+        drain(System.currentTimeMillis());
+
+        if (queue.size() &gt;= queueCapacity) {
+            return false; // shed load when the buffer is full
+        }
+
+        queue.add(requestId);
+        return true;
+    }
+
+    public synchronized Long pollReady() {
+        drain(System.currentTimeMillis());
+        return queue.poll();
+    }
+
+    private void drain(long now) {
+        if (queue.isEmpty()) {
+            nextLeakAt = now;
+            return;
+        }
+        if (now &gt;= nextLeakAt) {
+            nextLeakAt = now + intervalMillis;
+        }
+    }
+}</code></pre>
+<div class="callout warn"><b>Production note:</b> a real leaky bucket is normally implemented with a worker/scheduler that drains the queue at a controlled rate. The example focuses on the queue + overflow semantics rather than thread scheduling.</div>
+
+<h3>Which implementation should I code in an interview?</h3>
+<div class="card"><p><b>Token bucket</b> is usually the cleanest choice when the interviewer asks for configurable rate + burst behavior. For a strict "N requests per minute" requirement, start with fixed window and then explain why you would move to sliding window or token bucket if boundary bursts matter.</p></div>
+</section>
+
+<section id="distributed"><h2>5. Distributed / multi-instance design</h2>
+<p>Suppose there are 100 application pods. A local limiter with a limit of 100 requests/sec per pod does <i>not</i> enforce a global 100 requests/sec tenant quota. Shared state is required when the quota is global.</p>
+<div class="flow">
+<div class="node">100 app pods</div><div class="arrow">→</div><div class="node">Redis cluster</div><div class="arrow">→</div><div class="node">Atomic Lua / command</div><div class="arrow">→</div><div class="node">Allow / 429</div>
+</div>
+<h3>Redis key design</h3>
+<pre><code>rate:{tenantId}:{endpoint}
+rate:{userId}:{policyName}
+
+Example:
+rate:tenant-123:POST:/payments</code></pre>
+<h3>Why atomicity matters</h3>
+<pre><code>Bad:
+GET count
+if count &lt; limit
+  INCR count
+
+Two servers can both read the same old count and both allow.
+
+Better:
+One atomic Redis operation / Lua script:
+  1. read state
+  2. expire old state
+  3. calculate allowance
+  4. update state
+  5. return allowed + remaining + retryAfter</code></pre>
+<h3>Useful Redis response contract</h3>
+<pre><code>{
+  "allowed": true,
+  "remaining": 42,
+  "retryAfterMs": 0,
+  "limit": 100,
+  "resetAtMs": 1750000000000
+}</code></pre>
+<h3>HTTP behavior</h3>
+<pre><code>HTTP/1.1 429 Too Many Requests
+Retry-After: 2
+
+{
+  "error": "rate_limit_exceeded",
+  "retryAfterMs": 2000
+}</code></pre>
+</section>
+
+<section id="failure"><h2>6. Failure modes</h2>
+<table><thead><tr><th>Failure</th><th>Possible strategy</th><th>Trade-off</th></tr></thead>
+<tbody>
+<tr><td>Redis unavailable</td><td>Fail-open for low-risk reads; fail-closed for expensive/high-risk operations; optionally keep a local emergency limiter.</td><td>Availability vs protection.</td></tr>
+<tr><td>Redis slow</td><td>Short timeout, circuit breaker, local fallback.</td><td>Accuracy may degrade.</td></tr>
+<tr><td>Clock skew</td><td>Use a single authoritative datastore time where possible; monotonic clocks for local elapsed durations.</td><td>More datastore involvement.</td></tr>
+<tr><td>Hot key</td><td>Shard high-volume identities or use hierarchical/local + global limits.</td><td>More complex accounting.</td></tr>
+<tr><td>Eviction / memory growth</td><td>TTL per key; bounded queues; cleanup idle keys.</td><td>Very aggressive TTL can create bursts at re-creation.</td></tr>
+<tr><td>Retry storms</td><td>Exponential backoff + jitter and accurate Retry-After.</td><td>Clients may see delayed work.</td></tr>
+</tbody></table>
+</section>
+
+<section id="tradeoffs"><h2>7. Algorithm trade-offs</h2>
+<table><thead><tr><th>Need</th><th>Good fit</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Very simple per-minute quota</td><td>Fixed window</td><td>Small state and easy implementation.</td></tr>
+<tr><td>Precise recent-request count</td><td>Sliding log</td><td>Tracks timestamps directly.</td></tr>
+<tr><td>High scale with approximate smoothing</td><td>Sliding counter</td><td>Only a couple of counters per key.</td></tr>
+<tr><td>Burst + sustained rate</td><td>Token bucket</td><td>Capacity and refill rate model traffic naturally.</td></tr>
+<tr><td>Constant downstream output</td><td>Leaky bucket</td><td>Queues bursts and drains at a fixed rate.</td></tr>
+</tbody></table>
+<div class="callout"><b>Staff-level discussion:</b> do not stop at the algorithm. Explain identity cardinality, shared-vs-local state, atomicity, multi-region behavior, fallback mode, observability, and cost.</div>
+</section>
+
+<section id="interview"><h2>8. Interview-ready walkthrough</h2>
+<div class="toc">
+<a href="#requirements">① Clarify quota + identity</a>
+<a href="#architecture">② Draw request path</a>
+<a href="#algorithms">③ Compare algorithms</a>
+<a href="#code">④ Implement one locally</a>
+<a href="#distributed">⑤ Make it distributed</a>
+<a href="#failure">⑥ Discuss failures</a>
+<a href="#tradeoffs">⑦ Explain trade-offs</a>
+</div>
+<h3>Questions interviewers commonly ask</h3>
+<div class="grid">
+<div class="card"><h3>How do you make it accurate across 50 pods?</h3><p>Use shared atomic state, or explicitly choose approximate local accounting. State why the consistency requirement justifies the network hop.</p></div>
+<div class="card"><h3>How do you support 10M tenants?</h3><p>Prefer compact per-key state, TTL inactive keys, avoid timestamp logs at huge cardinality, and control policy/cache memory separately from request state.</p></div>
+<div class="card"><h3>How do you handle global multi-region quotas?</h3><p>Choose between a globally coordinated limiter, regional quota allocation, or an intentionally approximate model. The right answer depends on whether hard global enforcement is mandatory.</p></div>
+<div class="card"><h3>What metrics matter?</h3><p>Allowed/rejected rate, decision latency p50/p95/p99, Redis errors/timeouts, hot keys, remaining quota distribution, local fallback usage, and false-rejection indicators.</p></div>
+</div>
+<h3>A strong closing answer</h3>
+<pre><code>"For an API with bursty traffic, I would start with token bucket because it expresses
+both a sustained rate and burst capacity. In a multi-pod deployment, I would keep the
+authoritative bucket in Redis and evaluate/update it atomically. I'd add local
+protection as a fallback, define fail-open vs fail-closed by endpoint criticality,
+return Retry-After on 429s, and monitor decision latency plus rejection/error rates.
+If global multi-region enforcement is required, I'd revisit the state model because
+cross-region coordination becomes the dominant trade-off."</code></pre>
+</section>
+</main>
+
+<footer><div class="wrap">Rate Limiter System Design — interview reference. Examples are educational and intentionally simplified.</div></footer>
+</body>
+</html>
