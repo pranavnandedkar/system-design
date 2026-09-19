@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>System Design Study Hub</title>
+<style>
+:root{--bg:#0b1020;--panel:#121a2d;--panel2:#18233b;--text:#f4f7fb;--muted:#aeb9cc;--accent:#7dd3fc;--border:#293650}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;background:linear-gradient(145deg,#0b1020,#101a30);color:var(--text);line-height:1.6}
+main{max-width:1050px;margin:auto;padding:64px 24px 80px}.eyebrow{color:var(--accent);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:13px}
+h1{font-size:clamp(40px,7vw,72px);line-height:1.02;margin:12px 0 20px;max-width:800px}h2{font-size:28px;margin:0 0 18px}
+.lead{font-size:19px;color:var(--muted);max-width:760px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin:28px 0 52px}
+a{color:inherit;text-decoration:none}.btn{display:inline-block;padding:12px 18px;border:1px solid var(--border);border-radius:10px;background:var(--panel);font-weight:650}.btn.primary{background:var(--accent);color:#07111c;border-color:var(--accent)}
+section{margin-top:42px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.card{background:rgba(18,26,45,.92);border:1px solid var(--border);border-radius:16px;padding:22px;transition:transform .15s,border-color .15s}.card:hover{transform:translateY(-2px);border-color:#496184}
+.card h3{margin:0 0 8px;font-size:20px}.card p{margin:0;color:var(--muted)}.tag{display:inline-block;margin-top:16px;color:var(--accent);font-size:13px;font-weight:700}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.step{padding:18px;background:var(--panel2);border-radius:12px}.num{font-size:13px;color:var(--accent);font-weight:800}
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border);color:var(--muted);font-size:14px}
+@media(max-width:600px){main{padding:40px 18px 60px}.actions .btn{width:100%;text-align:center}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">Staff Engineer Interview Prep</div>
+<h1>System Design Study Hub</h1>
+<p class="lead">A practical collection of system-design notes, production trade-offs, failure modes, and Java examples built for senior and staff-level interviews.</p>
+<div class="actions">
+<a class="btn primary" href="rate-limiter.html">Open Rate Limiter Design →</a>
+<a class="btn" href="https://github.com/pranavnandedkar/system-design">View on GitHub</a>
+</div>
+
+<section>
+<h2>Available Designs</h2>
+<div class="grid">
+<a class="card" href="rate-limiter.html"><h3>Rate Limiter</h3><p>Requirements, five algorithms, Java implementations, Redis/distributed design, atomicity, failure handling, hot keys, multi-region trade-offs, and observability.</p><span class="tag">DEEP DIVE · JAVA</span></a>
+<div class="card"><h3>More coming soon</h3><p>Future topics can follow the same interview-first format: requirements, scale, architecture, data, bottlenecks, failure modes, and evolution.</p><span class="tag">BUILD YOUR LIBRARY</span></div>
+</div>
+</section>
+
+<section>
+<h2>Staff-Level Design Framework</h2>
+<div class="steps">
+<div class="step"><div class="num">01 · CLARIFY</div><strong>Requirements</strong><br><span>Functional, non-functional, constraints.</span></div>
+<div class="step"><div class="num">02 · ESTIMATE</div><strong>Scale</strong><br><span>QPS, storage, bandwidth, growth.</span></div>
+<div class="step"><div class="num">03 · DESIGN</div><strong>Architecture</strong><br><span>APIs, data, services, dependencies.</span></div>
+<div class="step"><div class="num">04 · STRESS</div><strong>Failure Modes</strong><br><span>Hotspots, retries, outages, recovery.</span></div>
+<div class="step"><div class="num">05 · TRADE OFF</div><strong>Decisions</strong><br><span>Cost, consistency, latency, complexity.</span></div>
+<div class="step"><div class="num">06 · EVOLVE</div><strong>Production</strong><br><span>Observability, rollout, multi-region.</span></div>
+</div>
+</section>
+
+<section>
+<h2>What to Practice</h2>
+<div class="grid">
+<div class="card"><h3>Architecture</h3><p>Start simple, then scale deliberately. Explain why each component exists.</p></div>
+<div class="card"><h3>Distributed Systems</h3><p>Reason about consistency, concurrency, idempotency, partitioning, and failure recovery.</p></div>
+<div class="card"><h3>Communication</h3><p>Make assumptions explicit and continuously connect design choices to requirements.</p></div>
+</div>
+</section>
+
+<footer>Built as an interview-preparation reference. Examples are intentionally simplified for learning; production systems require security, testing, capacity planning, and operational controls.</footer>
+</main>
+</body>
+</html>
